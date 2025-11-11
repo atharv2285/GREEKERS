@@ -1,0 +1,5 @@
+{
+  "name": "Greeker: Options Portfolio Analyzer",
+  "description": "An advanced financial tool to analyze stock option portfolios. It performs data collection, Black-Scholes-Merton pricing, Greeks calculation, volatility surface visualization, portfolio hedging simulation, and Value-at-Risk (VaR) analysis for any selected stock.",
+  "requestFramePermissions": []
+}
