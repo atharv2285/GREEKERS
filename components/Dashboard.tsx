@@ -51,50 +51,62 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
   });
   
   const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<Section>('summary');
 
   const financialService = useMemo(() => new FinancialService(), []);
 
   const fetchData = useCallback(async (currentConfig: Config, existingPortfolio: PortfolioPosition[] = []) => {
       setLoading(true);
+      setApiError(null);
       // Brief delay to give user feedback that something is happening
       await new Promise(resolve => setTimeout(resolve, 300));
       
       const existingStrikes = existingPortfolio.map(p => p.option.strike);
       
-      const data = financialService.generateStockData(stockTicker, currentConfig.startDate, currentConfig.endDate);
-      const liveData = financialService.generateLiveStockData(stockTicker, data.lastPrice);
-      const stats = financialService.calculateSummaryStatistics(data.historicalData.map(d => d.price));
-      const chain = financialService.generateOptionChain(data.lastPrice, stats.annualizedVolatility, currentConfig.riskFreeRate, existingStrikes);
+      try {
+        const data = await financialService.getStockData(stockTicker, currentConfig.startDate, currentConfig.endDate);
+        
+        // Check if the returned data is from simulation (a simple heuristic)
+        if (data.ticker !== stockTicker) { // The simulation service prepends "(Simulated)"
+            setApiError(`Could not fetch live data for ${stockTicker}. Using a deterministic simulation as a fallback.`);
+        }
 
-      setStockData(data);
-      setLiveStockData(liveData);
-      setSummaryStats(stats);
-      setOptionChain(chain);
+        const liveData = financialService.generateLiveStockData(stockTicker, data.lastPrice);
+        const stats = financialService.calculateSummaryStatistics(data.historicalData.map(d => d.price));
+        const chain = financialService.generateOptionChain(data.lastPrice, stats.annualizedVolatility, currentConfig.riskFreeRate, existingStrikes);
 
-      // Re-price portfolio if it exists
-      if (existingPortfolio.length > 0 && chain) {
-        const newPortfolio: PortfolioPosition[] = [];
-        // FIX: Explicitly type `allNewOptions` to prevent potential type inference issues.
-        const allNewOptions: Option[] = Object.values(chain).flat();
-        existingPortfolio.forEach((pos: PortfolioPosition) => {
-            const newOption = allNewOptions.find((opt: Option) => opt.id === pos.option.id);
-            if (newOption) {
-                newPortfolio.push({ option: newOption, quantity: pos.quantity });
-            }
-        });
-        setPortfolio(newPortfolio);
-      } else {
-        // Only reset portfolio if there wasn't one to begin with
-        setPortfolio([]);
+        setStockData(data);
+        setLiveStockData(liveData);
+        setSummaryStats(stats);
+        setOptionChain(chain);
+
+        // Re-price portfolio if it exists
+        if (existingPortfolio.length > 0 && chain) {
+          const newPortfolio: PortfolioPosition[] = [];
+          // FIX: `Object.values(chain)` is inferred as `unknown[]` because of the numeric indexer on `OptionChain`.
+          // Cast to `Option[][]` to ensure correct type after flattening.
+          const allNewOptions: Option[] = (Object.values(chain) as Option[][]).flat();
+          existingPortfolio.forEach((pos: PortfolioPosition) => {
+              const newOption = allNewOptions.find((opt: Option) => opt.id === pos.option.id);
+              if (newOption) {
+                  newPortfolio.push({ option: newOption, quantity: pos.quantity });
+              }
+          });
+          setPortfolio(newPortfolio);
+        } else {
+          setPortfolio([]);
+        }
+      } catch (error) {
+        console.error("Critical error during data fetch:", error);
+        setApiError("A critical error occurred. Please try again.");
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
   }, [stockTicker, financialService]);
 
-  // Initial fetch and refetch on ticker change ONLY. This is the fix.
+  // Initial fetch and refetch on ticker change ONLY.
   useEffect(() => {
-    // This effect now ONLY runs on the initial load for a stock ticker.
-    // It creates a fresh config and fetches data, resetting the portfolio, which is correct for a *new* stock.
     const newConfig = {
       riskFreeRate: 7,
       lotSize: 1,
@@ -102,14 +114,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
       endDate: getInitialEndDate(),
     };
     setConfig(newConfig);
-    fetchData(newConfig, []); // Pass an empty portfolio for a clean slate.
+    fetchData(newConfig, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stockTicker, fetchData]);
+  }, [stockTicker]); // `fetchData` is memoized and stable
   
-  // This is now the ONLY function that handles re-runs with new configs.
+  // Handles re-runs with new configs.
   const handleApplyConfig = useCallback(async (newConfig: Config) => {
       setConfig(newConfig);
-      // It crucially passes the CURRENT portfolio to be preserved and re-priced.
       await fetchData(newConfig, portfolio);
   }, [fetchData, portfolio]);
 
@@ -140,7 +151,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-cyan-500"></div>
-        <span className="ml-4 text-xl">Analyzing {stockTicker}...</span>
+        <span className="ml-4 text-xl">Fetching data for {stockTicker}...</span>
       </div>
     );
   }
@@ -156,7 +167,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
           <h2 className="text-2xl sm:text-3xl font-bold text-white">
               Analysis for <span className="text-cyan-400">{stockData.ticker}</span>
           </h2>
-          <p className="text-sm text-gray-400">Data simulated from {config.startDate} to {config.endDate}</p>
+          <p className="text-sm text-gray-400">
+            {apiError ? `Data from ${config.startDate} to ${config.endDate} (simulation)` : `Data from ${config.startDate} to ${config.endDate} (live)`}
+          </p>
         </div>
         <div className="flex items-center space-x-2 sm:space-x-4">
             <button onClick={handleDownload} className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg shadow-md transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-opacity-75">
@@ -164,6 +177,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
             </button>
         </div>
       </div>
+      
+      {apiError && (
+          <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-300 text-sm rounded-lg p-3 text-center">
+              {apiError}
+          </div>
+      )}
 
       <ConfigPanel config={config} onApplyChanges={handleApplyConfig} />
 

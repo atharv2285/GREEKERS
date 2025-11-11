@@ -88,9 +88,9 @@ export class FinancialService {
     return { price, greeks: { delta, gamma, vega, theta, rho }, d1, d2 };
   }
 
-  // --- Data Generation (Deterministic) ---
+  // --- Data Generation (Fallback Simulation) ---
 
-  public generateStockData(ticker: string, startDateStr: string, endDateStr: string): StockData {
+  public simulateStockDataUsingGBM(ticker: string, startDateStr: string, endDateStr: string): StockData {
     const seed = ticker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) + new Date(startDateStr).getTime();
     const rand1 = this.mulberry32(seed);
     const rand2 = this.mulberry32(seed + 1);
@@ -123,11 +123,60 @@ export class FinancialService {
     }
 
     return {
-        ticker,
+        ticker: `(Simulated) ${ticker}`,
         lastPrice: historicalData[historicalData.length - 1].price,
         historicalData
     };
   }
+
+  // --- Live Data Fetching ---
+  public async getStockData(ticker: string, startDateStr: string, endDateStr: string): Promise<StockData> {
+      const safeTicker = encodeURIComponent(ticker.endsWith('.NS') ? ticker : `${ticker}.NS`);
+      
+      const url = `/api/yahoo?ticker=${safeTicker}&startDate=${startDateStr}&endDate=${endDateStr}`;
+      
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `API request failed with status: ${response.status}`);
+        }
+        const data = await response.json();
+        
+        const result = data?.chart?.result?.[0];
+        if (!result || !result.timestamp || !result.indicators.quote[0].close) {
+            throw new Error('Invalid data structure from Yahoo Finance API');
+        }
+
+        const historicalData: HistoricalDataPoint[] = [];
+        for (let i = 0; i < result.timestamp.length; i++) {
+            const price = result.indicators.quote[0].close[i];
+            // Only include data points with a valid price
+            if (price !== null && price > 0) {
+                 historicalData.push({
+                    date: new Date(result.timestamp[i] * 1000).toISOString().split('T')[0],
+                    price: price
+                });
+            }
+        }
+
+        if (historicalData.length === 0) {
+            throw new Error('No valid historical data points returned from API.');
+        }
+
+        return {
+            ticker: ticker,
+            lastPrice: historicalData[historicalData.length - 1].price,
+            historicalData: historicalData,
+        };
+
+      } catch (error) {
+          console.error(`API fetch failed for ${ticker}:`, error);
+          // Fallback to simulation if the API call fails
+          return this.simulateStockDataUsingGBM(ticker, startDateStr, endDateStr);
+      }
+  }
+
 
   public generateLiveStockData(ticker: string, lastPrice: number): LiveStockData {
      let seed = ticker.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) + new Date().getDate();
