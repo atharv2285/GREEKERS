@@ -3,6 +3,58 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+// Cache the crumb and cookie to reuse them across requests (serverless instances might reuse this)
+let cachedCrumb: string | null = null;
+let cachedCookie: string | null = null;
+
+async function getCrumbAndCookie() {
+  if (cachedCrumb && cachedCookie) {
+    return { crumb: cachedCrumb, cookie: cachedCookie };
+  }
+
+  try {
+    // 1. Get a cookie by visiting a Yahoo Finance page
+    const response = await fetch('https://fc.yahoo.com', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    // The cookie is usually set in the response headers, or we might need to hit another page like https://finance.yahoo.com/quote/SPY
+    // fc.yahoo.com often redirects or sets a cookie.
+    // Let's try a more reliable source: https://finance.yahoo.com/quote/SPY
+
+    const pageResponse = await fetch('https://finance.yahoo.com/quote/SPY', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    const cookie = pageResponse.headers.get('set-cookie');
+    if (!cookie) throw new Error('Failed to fetch cookie from Yahoo Finance');
+
+    // 2. Get the crumb using the cookie
+    const crumbResponse = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+      headers: {
+        'Cookie': cookie,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    const crumb = await crumbResponse.text();
+    if (!crumb) throw new Error('Failed to fetch crumb');
+
+    cachedCrumb = crumb;
+    cachedCookie = cookie;
+
+    return { crumb, cookie };
+
+  } catch (error) {
+    console.error('Error fetching crumb/cookie:', error);
+    throw error;
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Set CORS headers to allow requests from any origin
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,56 +67,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-    const { ticker, startDate, endDate, type } = req.query;
+  const { ticker, startDate, endDate, type } = req.query;
 
-    if (!ticker || typeof ticker !== 'string') {
-      return res.status(400).json({ error: 'Missing or invalid query parameter: ticker is required.' });
-    }
-
-    try {
-      let yahooUrl = '';
-
-      if (type === 'options') {
-        // Fetch option chain data
-        // If date is provided (unix timestamp), use it. Otherwise default to nearest expiry.
-        const dateParam = req.query.date ? `?date=${req.query.date}` : '';
-        yahooUrl = `https://query1.finance.yahoo.com/v7/finance/options/${ticker}${dateParam}`;
-      } else {
-        // Default to historical data (chart)
-        if (!startDate || typeof startDate !== 'string' || !endDate || typeof endDate !== 'string') {
-           return res.status(400).json({ error: 'Missing or invalid query parameters: startDate and endDate are required for historical data.' });
-        }
-        const period1 = Math.floor(new Date(startDate).getTime() / 1000);
-        const period2 = Math.floor(new Date(endDate).getTime() / 1000);
-
-        if (isNaN(period1) || isNaN(period2)) {
-          return res.status(400).json({ error: 'Invalid date format provided.' });
-        }
-        yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d`;
-      }
-
-      // Fetch data from Yahoo Finance API from the server-side
-      const yahooResponse = await fetch(yahooUrl, {
-        headers: {
-          // Adding a user-agent can sometimes help avoid being blocked
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-      });
-
-      if (!yahooResponse.ok) {
-        const errorText = await yahooResponse.text();
-        console.error(`Yahoo Finance API error for ${ticker}: ${yahooResponse.status} ${errorText}`);
-        return res.status(yahooResponse.status).json({ error: `Yahoo Finance API request failed with status: ${yahooResponse.status}`, details: errorText });
-      }
-
-      const data = await yahooResponse.json();
-      
-      // Send the successful response back to the client
-      return res.status(200).json(data);
-
-    } catch (error) {
-      console.error(`Internal server error for ticker ${ticker}:`, error);
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-      return res.status(500).json({ error: 'Internal server error while fetching data from Yahoo Finance.', details: errorMessage });
-    }
+  if (!ticker || typeof ticker !== 'string') {
+    return res.status(400).json({ error: 'Missing or invalid query parameter: ticker is required.' });
   }
+
+  try {
+    // Get authentication (crumb & cookie)
+    const { crumb, cookie } = await getCrumbAndCookie();
+
+    let yahooUrl = '';
+
+    if (type === 'options') {
+      // Fetch option chain data
+      const dateParam = req.query.date ? `&date=${req.query.date}` : '';
+      yahooUrl = `https://query1.finance.yahoo.com/v7/finance/options/${ticker}?crumb=${crumb}${dateParam}`;
+    } else {
+      // Default to historical data (chart)
+      if (!startDate || typeof startDate !== 'string' || !endDate || typeof endDate !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid query parameters: startDate and endDate are required for historical data.' });
+      }
+      const period1 = Math.floor(new Date(startDate).getTime() / 1000);
+      const period2 = Math.floor(new Date(endDate).getTime() / 1000);
+
+      if (isNaN(period1) || isNaN(period2)) {
+        return res.status(400).json({ error: 'Invalid date format provided.' });
+      }
+      yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d&events=history&crumb=${crumb}`;
+    }
+
+    // Fetch data from Yahoo Finance API from the server-side
+    const yahooResponse = await fetch(yahooUrl, {
+      headers: {
+        'Cookie': cookie,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    if (!yahooResponse.ok) {
+      const errorText = await yahooResponse.text();
+      console.error(`Yahoo Finance API error for ${ticker}: ${yahooResponse.status} ${errorText}`);
+      // If unauthorized, maybe clear cache and retry? For now just return error.
+      if (yahooResponse.status === 401) {
+        cachedCrumb = null;
+        cachedCookie = null;
+      }
+      return res.status(yahooResponse.status).json({ error: `Yahoo Finance API request failed with status: ${yahooResponse.status}`, details: errorText });
+    }
+
+    const data = await yahooResponse.json();
+
+    // Send the successful response back to the client
+    return res.status(200).json(data);
+
+  } catch (error) {
+    console.error(`Internal server error for ticker ${ticker}:`, error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    return res.status(500).json({ error: 'Internal server error while fetching data from Yahoo Finance.', details: errorMessage });
+  }
+}
