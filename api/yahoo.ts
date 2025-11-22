@@ -14,24 +14,29 @@ async function getCrumbAndCookie() {
 
   try {
     // 1. Get a cookie by visiting a Yahoo Finance page
-    const response = await fetch('https://fc.yahoo.com', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    // Try finance.yahoo.com first as it's more reliable than fc.yahoo.com in some environments
+    let cookie: string | null = null;
+
+    const urls = ['https://finance.yahoo.com', 'https://fc.yahoo.com'];
+
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+        });
+        cookie = response.headers.get('set-cookie');
+        if (cookie) break;
+      } catch (e) {
+        console.warn(`Failed to fetch cookie from ${url}`, e);
       }
-    });
+    }
 
-    // The cookie is usually set in the response headers, or we might need to hit another page like https://finance.yahoo.com/quote/SPY
-    // fc.yahoo.com often redirects or sets a cookie.
-    // Let's try a more reliable source: https://finance.yahoo.com/quote/SPY
-
-    const pageResponse = await fetch('https://finance.yahoo.com/quote/SPY', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
-    });
-
-    const cookie = pageResponse.headers.get('set-cookie');
-    if (!cookie) throw new Error('Failed to fetch cookie from Yahoo Finance');
+    if (!cookie) {
+      console.warn('Failed to fetch cookie from any source. Proceeding without auth.');
+      return { crumb: null, cookie: null };
+    }
 
     // 2. Get the crumb using the cookie
     const crumbResponse = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
@@ -42,7 +47,10 @@ async function getCrumbAndCookie() {
     });
 
     const crumb = await crumbResponse.text();
-    if (!crumb) throw new Error('Failed to fetch crumb');
+    if (!crumb) {
+      console.warn('Failed to fetch crumb. Proceeding without auth.');
+      return { crumb: null, cookie: null };
+    }
 
     cachedCrumb = crumb;
     cachedCookie = cookie;
@@ -51,7 +59,8 @@ async function getCrumbAndCookie() {
 
   } catch (error) {
     console.error('Error fetching crumb/cookie:', error);
-    throw error;
+    // Return nulls to allow fallback to unauthenticated request
+    return { crumb: null, cookie: null };
   }
 }
 
@@ -82,7 +91,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (type === 'options') {
       // Fetch option chain data
       const dateParam = req.query.date ? `&date=${req.query.date}` : '';
-      yahooUrl = `https://query1.finance.yahoo.com/v7/finance/options/${ticker}?crumb=${crumb}${dateParam}`;
+      // Actually, if no crumb, we shouldn't add the param.
+      // URL structure: .../options/ticker?crumb=...&date=... OR .../options/ticker?date=...
+
+      const queryParams = [];
+      if (crumb) queryParams.push(`crumb=${crumb}`);
+      if (req.query.date) queryParams.push(`date=${req.query.date}`);
+
+      const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
+      yahooUrl = `https://query1.finance.yahoo.com/v7/finance/options/${ticker}${queryString}`;
     } else {
       // Default to historical data (chart)
       if (!startDate || typeof startDate !== 'string' || !endDate || typeof endDate !== 'string') {
@@ -94,16 +111,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (isNaN(period1) || isNaN(period2)) {
         return res.status(400).json({ error: 'Invalid date format provided.' });
       }
-      yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d&events=history&crumb=${crumb}`;
+
+      const crumbParam = crumb ? `&crumb=${crumb}` : '';
+      yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${period1}&period2=${period2}&interval=1d&events=history${crumbParam}`;
     }
 
     // Fetch data from Yahoo Finance API from the server-side
-    const yahooResponse = await fetch(yahooUrl, {
-      headers: {
-        'Cookie': cookie,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
-    });
+    const headers: HeadersInit = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    };
+    if (cookie) {
+      headers['Cookie'] = cookie;
+    }
+
+    const yahooResponse = await fetch(yahooUrl, { headers });
 
     if (!yahooResponse.ok) {
       const errorText = await yahooResponse.text();
