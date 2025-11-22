@@ -13,7 +13,7 @@ const CustomTooltip: React.FC<any> = ({ active, payload, label }) => {
       <div className="bg-gray-700 p-3 border border-gray-600 rounded-md shadow-lg">
         <p className="label font-bold text-cyan-400">{`Strike: ${label}`}</p>
         {payload.map((pld: any) => (
-           <p key={pld.name} style={{ color: pld.color }}>{`${pld.name}: ${(pld.value * 100).toFixed(2)}%`}</p>
+          <p key={pld.name} style={{ color: pld.color }}>{`${pld.name}: ${(pld.value * 100).toFixed(2)}%`}</p>
         ))}
       </div>
     );
@@ -23,17 +23,17 @@ const CustomTooltip: React.FC<any> = ({ active, payload, label }) => {
 
 export const VolatilitySurface: React.FC<VolatilitySurfaceProps> = ({ optionChain }) => {
   const data = React.useMemo(() => {
-    const strikes = [...new Set(Object.values(optionChain).flat().map((o: Option) => o.strike))].sort((a,b) => a-b);
-    
+    const strikes = [...new Set(Object.values(optionChain).flat().map((o: Option) => o.strike))].sort((a, b) => a - b);
+
     return strikes.map(strike => {
-        const point: { strike: number, [key: string]: number } = { strike };
-        for (const maturity in optionChain) {
-            const option = optionChain[maturity].find(o => o.strike === strike && o.type === OptionType.Call);
-            if(option) {
-                point[`${maturity}D IV`] = option.iv;
-            }
+      const point: { strike: number, [key: string]: number } = { strike };
+      for (const maturity in optionChain) {
+        const option = optionChain[maturity].find(o => o.strike === strike && o.type === OptionType.Call);
+        if (option) {
+          point[`${maturity}D IV`] = option.iv;
         }
-        return point;
+      }
+      return point;
     });
   }, [optionChain]);
 
@@ -51,19 +51,19 @@ export const VolatilitySurface: React.FC<VolatilitySurfaceProps> = ({ optionChai
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#4A5568" />
             <XAxis dataKey="strike" tick={{ fill: '#A0AEC0' }} label={{ value: 'Strike Price', position: 'insideBottom', offset: -15, fill: '#CBD5E0' }} />
-            <YAxis tickFormatter={(tick) => `${(tick * 100).toFixed(0)}%`} tick={{ fill: '#A0AEC0' }} label={{ value: 'Implied Volatility', angle: -90, position: 'insideLeft', fill: '#CBD5E0', dy: 80 }}/>
+            <YAxis domain={['auto', 'auto']} tickFormatter={(tick) => `${(tick * 100).toFixed(0)}%`} tick={{ fill: '#A0AEC0' }} label={{ value: 'Implied Volatility', angle: -90, position: 'insideLeft', fill: '#CBD5E0', dy: 80 }} />
             <Tooltip content={<CustomTooltip />} />
             <Legend wrapperStyle={{ color: '#E2E8F0', paddingTop: '20px' }} />
             {maturities.map((maturity, index) => (
-                <Line 
-                    key={maturity} 
-                    type="monotone" 
-                    dataKey={`${maturity}D IV`} 
-                    stroke={colors[index % colors.length]} 
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: colors[index % colors.length] }}
-                    activeDot={{ r: 6 }}
-                />
+              <Line
+                key={maturity}
+                type="monotone"
+                dataKey={`${maturity}D IV`}
+                stroke={colors[index % colors.length]}
+                strokeWidth={2}
+                dot={{ r: 3, fill: colors[index % colors.length] }}
+                activeDot={{ r: 6 }}
+              />
             ))}
           </LineChart>
         </ResponsiveContainer>
