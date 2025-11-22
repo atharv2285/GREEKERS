@@ -335,6 +335,12 @@ export class FinancialService {
         });
       }
 
+      // If we failed to construct a meaningful chain (e.g. API returned 200 but empty data), fallback.
+      if (Object.keys(chain).length === 0) {
+        console.warn("Live option chain is empty, falling back to simulation.");
+        return this.simulateOptionChain(currentPrice, histVolatility, riskFreeRate);
+      }
+
       return chain;
 
     } catch (error) {
