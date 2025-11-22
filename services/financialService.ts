@@ -441,7 +441,7 @@ export class FinancialService {
       return sum + pos.quantity * pos.option.bsmPrice;
     }, 0);
 
-    const { deltaHedgeShares } = this.hedgePortfolio(portfolio, 1); // Per lot
+    const { deltaHedgeShares } = this.hedgePortfolio(portfolio, config.lotSize); // Per lot
 
     return scenarios.map(change => {
       const newPrice = lastPrice * (1 + change);
