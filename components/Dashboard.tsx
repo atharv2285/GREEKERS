@@ -201,6 +201,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
         <SectionButton label="Greeks & IV" section="greeks" activeSection={activeSection} onClick={setActiveSection} />
         <SectionButton label="PnL Scenarios" section="pnl" activeSection={activeSection} onClick={setActiveSection} />
         <SectionButton label="Volatility Surface" section="volatility" activeSection={activeSection} onClick={setActiveSection} />
+        <SectionButton label="Strategy Comparison" section="strategy" activeSection={activeSection} onClick={setActiveSection} />
       </div>
 
       <div className="bg-gray-800 p-4 sm:p-6 rounded-b-xl rounded-r-xl shadow-lg">
@@ -210,6 +211,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stockTicker }) => {
         {activeSection === 'greeks' && <GreeksAnalysis optionChain={optionChain} portfolio={portfolio} gammaHedge={gammaHedge} />}
         {activeSection === 'pnl' && <PnLScenarios portfolio={portfolio} stockData={stockData} financialService={financialService} config={config} />}
         {activeSection === 'volatility' && <VolatilitySurface optionChain={optionChain} />}
+        {activeSection === 'strategy' && <StrategyComparison stockData={stockData} optionChain={optionChain} financialService={financialService} />}
       </div>
     </div>
   );
