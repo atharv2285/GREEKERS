@@ -9,19 +9,20 @@ import { VolatilitySurface } from './VolatilitySurface';
 import { ConfigPanel } from './ConfigPanel';
 import { PnLScenarios } from './PnLScenarios';
 import { GreeksAnalysis } from './GreeksAnalysis';
+import { StrategyComparison } from './StrategyComparison';
 
 interface DashboardProps {
   stockTicker: string;
 }
 
-type Section = 'summary' | 'chain' | 'portfolio' | 'greeks' | 'pnl' | 'volatility';
+type Section = 'summary' | 'chain' | 'portfolio' | 'greeks' | 'pnl' | 'volatility' | 'strategy';
 
 const SectionButton: React.FC<{ label: string; section: Section; activeSection: Section; onClick: (section: Section) => void; }> = ({ label, section, activeSection, onClick }) => (
   <button
     onClick={() => onClick(section)}
     className={`px-4 py-2 text-sm sm:text-base font-semibold rounded-t-lg transition-colors duration-200 focus:outline-none ${activeSection === section
-        ? 'bg-gray-800 border-b-2 border-cyan-400 text-cyan-400'
-        : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+      ? 'bg-gray-800 border-b-2 border-cyan-400 text-cyan-400'
+      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
       }`}
   >
     {label}

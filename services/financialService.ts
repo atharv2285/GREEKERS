@@ -1,5 +1,5 @@
-import type { StockData, SummaryStats, OptionChain, Option, PortfolioPosition, PortfolioGreeks, VaRResult, HistoricalDataPoint, LiveStockData, Config, PnLScenario, Greeks, GammaHedgeSuggestion } from '../types';
-import { OptionType } from '../types';
+import type { StockData, SummaryStats, OptionChain, Option, PortfolioPosition, PortfolioGreeks, VaRResult, HistoricalDataPoint, LiveStockData, Config, PnLScenario, Greeks, GammaHedgeSuggestion, Strategy } from '../types';
+import { OptionType, StrategyType } from '../types';
 
 export class FinancialService {
 
@@ -516,5 +516,128 @@ export class FinancialService {
       addSection("VaR_Hedged", [["Level", "ParametricVaR_hedged", "HistoricalVaR_hedged"], [95, hedgedVaR.parametric95.toFixed(4), hedgedVaR.historical95.toFixed(4)], [99, hedgedVaR.parametric99.toFixed(4), hedgedVaR.historical99.toFixed(4)]]);
     }
     return csvContent;
+  }
+
+  public generateStrategy(type: StrategyType, currentPrice: number, optionChain: OptionChain): Strategy | null {
+    // Use the nearest expiration (shortest maturity) for standard strategies
+    const maturities = Object.keys(optionChain).map(Number).sort((a, b) => a - b);
+    if (maturities.length === 0) return null;
+    const maturity = maturities[0];
+    const options = optionChain[maturity];
+
+    const calls = options.filter(o => o.type === OptionType.Call).sort((a, b) => a.strike - b.strike);
+    const puts = options.filter(o => o.type === OptionType.Put).sort((a, b) => a.strike - b.strike);
+
+    if (calls.length === 0 || puts.length === 0) return null;
+
+    // Find ATM options
+    const atmCall = calls.reduce((prev, curr) => Math.abs(curr.strike - currentPrice) < Math.abs(prev.strike - currentPrice) ? curr : prev);
+    const atmPut = puts.find(p => p.strike === atmCall.strike);
+
+    if (!atmCall || !atmPut) return null;
+
+    let legs: PortfolioPosition[] = [];
+    let name = type;
+    let description = "";
+    let maxProfit: number | string = "Unlimited";
+    let maxLoss: number | string = "Unlimited";
+    let breakeven: number[] = [];
+
+    switch (type) {
+      case StrategyType.Straddle:
+        // Long Straddle: Buy ATM Call + Buy ATM Put
+        legs = [
+          { option: atmCall, quantity: 1 },
+          { option: atmPut, quantity: 1 }
+        ];
+        description = `Buy ATM Call (${atmCall.strike}) and Put (${atmPut.strike})`;
+        maxLoss = (atmCall.bsmPrice + atmPut.bsmPrice).toFixed(2); // Max loss is premium paid
+        breakeven = [atmPut.strike - (atmCall.bsmPrice + atmPut.bsmPrice), atmCall.strike + (atmCall.bsmPrice + atmPut.bsmPrice)];
+        break;
+
+      case StrategyType.Strangle:
+        // Long Strangle: Buy OTM Call + Buy OTM Put
+        // OTM Call: Strike > Current Price
+        // OTM Put: Strike < Current Price
+        const otmCall = calls.find(c => c.strike > currentPrice * 1.02) || calls[calls.length - 1];
+        const otmPut = puts.slice().reverse().find(p => p.strike < currentPrice * 0.98) || puts[0];
+
+        if (!otmCall || !otmPut) return null;
+
+        legs = [
+          { option: otmCall, quantity: 1 },
+          { option: otmPut, quantity: 1 }
+        ];
+        description = `Buy OTM Call (${otmCall.strike}) and OTM Put (${otmPut.strike})`;
+        maxLoss = (otmCall.bsmPrice + otmPut.bsmPrice).toFixed(2);
+        breakeven = [otmPut.strike - (otmCall.bsmPrice + otmPut.bsmPrice), otmCall.strike + (otmCall.bsmPrice + otmPut.bsmPrice)];
+        break;
+
+      case StrategyType.Butterfly:
+        // Long Call Butterfly: Buy 1 ITM Call, Sell 2 ATM Calls, Buy 1 OTM Call
+        // Strikes: A < B < C, equidistant
+        const centerIndex = calls.findIndex(c => c.strike === atmCall.strike);
+        if (centerIndex < 1 || centerIndex >= calls.length - 1) return null;
+
+        const lowerCall = calls[centerIndex - 1];
+        const upperCall = calls[centerIndex + 1];
+
+        // Ensure equidistant strikes roughly
+        // For simplicity in this demo, we just take adjacent strikes. 
+        // In a real app, we'd search for exact equidistant strikes.
+
+        legs = [
+          { option: lowerCall, quantity: 1 },
+          { option: atmCall, quantity: -2 },
+          { option: upperCall, quantity: 1 }
+        ];
+        description = `Buy ${lowerCall.strike} Call, Sell 2x ${atmCall.strike} Calls, Buy ${upperCall.strike} Call`;
+
+        const netDebit = (lowerCall.bsmPrice + upperCall.bsmPrice - 2 * atmCall.bsmPrice);
+        maxLoss = netDebit.toFixed(2);
+        maxProfit = (atmCall.strike - lowerCall.strike - netDebit).toFixed(2);
+        breakeven = [lowerCall.strike + netDebit, upperCall.strike - netDebit];
+        break;
+
+      case StrategyType.IronCondor:
+        // Iron Condor: Sell OTM Put (B), Buy Further OTM Put (A), Sell OTM Call (C), Buy Further OTM Call (D)
+        // Strikes: A < B < Current < C < D
+        const shortPut = puts.slice().reverse().find(p => p.strike < currentPrice * 0.95);
+        const longPut = puts.slice().reverse().find(p => p.strike < (shortPut?.strike || 0));
+        const shortCall = calls.find(c => c.strike > currentPrice * 1.05);
+        const longCall = calls.find(c => c.strike > (shortCall?.strike || 0));
+
+        if (!shortPut || !longPut || !shortCall || !longCall) return null;
+
+        legs = [
+          { option: longPut, quantity: 1 },
+          { option: shortPut, quantity: -1 },
+          { option: shortCall, quantity: -1 },
+          { option: longCall, quantity: 1 }
+        ];
+        description = `Buy ${longPut.strike} Put, Sell ${shortPut.strike} Put, Sell ${shortCall.strike} Call, Buy ${longCall.strike} Call`;
+
+        const netCredit = (shortPut.bsmPrice + shortCall.bsmPrice) - (longPut.bsmPrice + longCall.bsmPrice);
+        maxProfit = netCredit.toFixed(2);
+        maxLoss = ((shortCall.strike - longCall.strike) + netCredit).toFixed(2); // Width of wing - credit (approx)
+
+        breakeven = [shortPut.strike - netCredit, shortCall.strike + netCredit];
+        break;
+    }
+
+    const netGreeks = this.calculatePortfolioGreeks(legs);
+    const cost = legs.reduce((sum, leg) => sum + leg.quantity * leg.option.bsmPrice, 0);
+
+    return {
+      type,
+      name,
+      description,
+      legs,
+      netGreeks,
+      cost,
+      maxProfit,
+      maxLoss,
+      breakeven
+    };
   }
 }

@@ -86,9 +86,9 @@ export interface VaRResult {
 }
 
 export interface PnLScenario {
-    scenario: string;
-    pnlUnhedged: number;
-    pnlDeltaHedged: number;
+  scenario: string;
+  pnlUnhedged: number;
+  pnlDeltaHedged: number;
 }
 
 export interface GammaHedgeSuggestion {
@@ -96,4 +96,23 @@ export interface GammaHedgeSuggestion {
   quantity: number;
   option: Option;
   message: string;
+}
+
+export enum StrategyType {
+  Straddle = 'Straddle',
+  Strangle = 'Strangle',
+  Butterfly = 'Butterfly',
+  IronCondor = 'Iron Condor',
+}
+
+export interface Strategy {
+  type: StrategyType;
+  name: string;
+  description: string;
+  legs: PortfolioPosition[];
+  netGreeks: Greeks;
+  cost: number; // Net Debit (positive) or Credit (negative)
+  maxProfit: number | string;
+  maxLoss: number | string;
+  breakeven: number[];
 }
