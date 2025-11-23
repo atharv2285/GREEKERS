@@ -646,4 +646,43 @@ export class FinancialService {
       breakeven
     };
   }
+
+  public calculateStrategyPnL(strategy: Strategy, targetPrice: number, targetDate: Date, targetIVChange: number, riskFreeRate: number): number {
+    let currentPnL = 0;
+    const r = riskFreeRate / 100;
+
+    strategy.legs.forEach(leg => {
+      const { strike, maturity, type, iv } = leg.option;
+
+      // Calculate time to expiration at target date
+      const now = new Date();
+      const msPassed = targetDate.getTime() - now.getTime();
+      const daysPassed = msPassed / (1000 * 60 * 60 * 24);
+
+      let newT = (maturity - daysPassed) / 365.0;
+      if (newT < 0) newT = 0; // Expired
+
+      // Adjust IV
+      const newIV = iv + targetIVChange;
+
+      let price = 0;
+      if (newT === 0) {
+        // Intrinsic value at expiration
+        if (type === OptionType.Call) {
+          price = Math.max(0, targetPrice - strike);
+        } else {
+          price = Math.max(0, strike - targetPrice);
+        }
+      } else {
+        // BSM Price
+        const res = this.bsm(targetPrice, strike, newT, newIV, r, type);
+        price = res.price;
+      }
+
+      // PnL = (New Price - Entry Price) * Quantity
+      currentPnL += (price - leg.option.bsmPrice) * leg.quantity;
+    });
+
+    return currentPnL;
+  }
 }

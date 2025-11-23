@@ -14,6 +14,10 @@ export const StrategyComparison: React.FC<StrategyComparisonProps> = ({ stockDat
     const [selectedStrategy2, setSelectedStrategy2] = useState<StrategyType | null>(null);
     const [isCompareMode, setIsCompareMode] = useState(false);
 
+    // Simulation State
+    const [simulatedDaysPassed, setSimulatedDaysPassed] = useState(0);
+    const [simulatedIVChange, setSimulatedIVChange] = useState(0); // -0.1 to 0.1 (e.g. -10% to +10%)
+
     const strategies = Object.values(StrategyType);
 
     const strategy1 = useMemo(() => {
@@ -24,6 +28,36 @@ export const StrategyComparison: React.FC<StrategyComparisonProps> = ({ stockDat
         if (!selectedStrategy2) return null;
         return financialService.generateStrategy(selectedStrategy2, stockData.lastPrice, optionChain);
     }, [selectedStrategy2, stockData.lastPrice, optionChain, financialService]);
+
+    // Generate Chart Data
+    const chartData = useMemo(() => {
+        if (!strategy1) return [];
+
+        const data = [];
+        const currentPrice = stockData.lastPrice;
+        const range = 0.20; // +/- 20%
+        const step = (currentPrice * range * 2) / 40; // 40 points
+
+        const targetDate = new Date();
+        targetDate.setDate(targetDate.getDate() + simulatedDaysPassed);
+
+        for (let price = currentPrice * (1 - range); price <= currentPrice * (1 + range); price += step) {
+            const pnl1 = financialService.calculateStrategyPnL(strategy1, price, targetDate, simulatedIVChange, 7); // Assuming 7% risk free rate
+
+            let point: any = {
+                price: price.toFixed(2),
+                [`${strategy1.name} (Sim)`]: pnl1,
+            };
+
+            if (isCompareMode && strategy2) {
+                const pnl2 = financialService.calculateStrategyPnL(strategy2, price, targetDate, simulatedIVChange, 7);
+                point[`${strategy2.name} (Sim)`] = pnl2;
+            }
+
+            data.push(point);
+        }
+        return data;
+    }, [strategy1, strategy2, isCompareMode, stockData.lastPrice, simulatedDaysPassed, simulatedIVChange, financialService]);
 
     const renderStrategyCard = (strategy: Strategy | null, title: string) => {
         if (!strategy) return <div className="text-gray-500 italic">Strategy not available for current data</div>;
@@ -107,8 +141,8 @@ export const StrategyComparison: React.FC<StrategyComparisonProps> = ({ stockDat
                         }
                     }}
                     className={`px-4 py-2 rounded-lg font-semibold transition-colors ${isCompareMode
-                            ? 'bg-cyan-600 text-white hover:bg-cyan-700'
-                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        ? 'bg-cyan-600 text-white hover:bg-cyan-700'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                         }`}
                 >
                     {isCompareMode ? 'Exit Comparison' : 'Compare Strategies'}
@@ -125,8 +159,8 @@ export const StrategyComparison: React.FC<StrategyComparisonProps> = ({ stockDat
                                 key={s}
                                 onClick={() => setSelectedStrategy1(s)}
                                 className={`px-3 py-1 text-sm rounded-full border transition-colors ${selectedStrategy1 === s
-                                        ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400'
-                                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                                    ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400'
+                                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
                                     }`}
                             >
                                 {s}
@@ -146,8 +180,8 @@ export const StrategyComparison: React.FC<StrategyComparisonProps> = ({ stockDat
                                     key={s}
                                     onClick={() => setSelectedStrategy2(s)}
                                     className={`px-3 py-1 text-sm rounded-full border transition-colors ${selectedStrategy2 === s
-                                            ? 'bg-purple-500/20 border-purple-500 text-purple-400'
-                                            : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
+                                        ? 'bg-purple-500/20 border-purple-500 text-purple-400'
+                                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
                                         }`}
                                 >
                                     {s}
@@ -157,6 +191,86 @@ export const StrategyComparison: React.FC<StrategyComparisonProps> = ({ stockDat
                         {renderStrategyCard(strategy2, "Strategy 2")}
                     </div>
                 )}
+            </div>
+
+            {/* Scenario Analysis Section */}
+            <div className="bg-gray-800 p-6 rounded-xl shadow-lg mt-8">
+                <h3 className="text-xl font-bold text-white mb-6">Scenario Analysis: Payoff Diagram</h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Simulated Days Passed: <span className="text-cyan-400">{simulatedDaysPassed} days</span>
+                        </label>
+                        <input
+                            type="range"
+                            min="0"
+                            max="30"
+                            step="1"
+                            value={simulatedDaysPassed}
+                            onChange={(e) => setSimulatedDaysPassed(Number(e.target.value))}
+                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">
+                            Simulated IV Change: <span className="text-cyan-400">{(simulatedIVChange * 100).toFixed(0)}%</span>
+                        </label>
+                        <input
+                            type="range"
+                            min="-0.1"
+                            max="0.1"
+                            step="0.01"
+                            value={simulatedIVChange}
+                            onChange={(e) => setSimulatedIVChange(Number(e.target.value))}
+                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                    </div>
+                </div>
+
+                <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                                dataKey="price"
+                                stroke="#9CA3AF"
+                                label={{ value: 'Stock Price', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
+                            />
+                            <YAxis
+                                stroke="#9CA3AF"
+                                label={{ value: 'PnL', angle: -90, position: 'insideLeft', fill: '#9CA3AF' }}
+                            />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: '#1F2937', border: 'none', borderRadius: '0.5rem' }}
+                                itemStyle={{ color: '#E5E7EB' }}
+                            />
+                            <Legend verticalAlign="top" height={36} />
+                            <ReferenceLine y={0} stroke="#6B7280" strokeDasharray="3 3" />
+                            <ReferenceLine x={stockData.lastPrice} stroke="#6B7280" strokeDasharray="3 3" label="Current" />
+
+                            {strategy1 && (
+                                <Line
+                                    type="monotone"
+                                    dataKey={`${strategy1.name} (Sim)`}
+                                    stroke="#06B6D4"
+                                    strokeWidth={2}
+                                    dot={false}
+                                />
+                            )}
+
+                            {isCompareMode && strategy2 && (
+                                <Line
+                                    type="monotone"
+                                    dataKey={`${strategy2.name} (Sim)`}
+                                    stroke="#A855F7"
+                                    strokeWidth={2}
+                                    dot={false}
+                                />
+                            )}
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
             </div>
         </div>
     );
